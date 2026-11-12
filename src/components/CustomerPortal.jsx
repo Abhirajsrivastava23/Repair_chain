@@ -26,23 +26,35 @@ import {
 
 export default function CustomerPortal({ onOpenCertificate }) {
   const {
+    currentUser,
     repairs,
     warranties,
     submitRepairRequest,
     handleQuoteDecision
   } = useRepair();
 
+  // Find customer's default repair if logged in
+  const userRepairs = repairs.filter(
+    r => (currentUser && (
+      r.customer?.email?.toLowerCase() === currentUser.email?.toLowerCase() ||
+      r.customer?.name?.toLowerCase() === currentUser.name?.toLowerCase()
+    ))
+  );
+
   const [activeTab, setActiveTab] = useState('track'); // 'track' | 'book' | 'warranty' | 'history'
-  const [searchCode, setSearchCode] = useState('RC-80412');
+  const [searchCode, setSearchCode] = useState(() => {
+    if (userRepairs.length > 0) return userRepairs[0].trackingCode;
+    return 'RC-80412';
+  });
   const [warrantyQuery, setWarrantyQuery] = useState('');
   const [warrantyResult, setWarrantyResult] = useState(null);
   const [historyQuery, setHistoryQuery] = useState('');
 
   // New Repair Form State
   const [formData, setFormData] = useState({
-    customerName: '',
-    customerEmail: '',
-    customerPhone: '',
+    customerName: currentUser?.name || '',
+    customerEmail: currentUser?.email || '',
+    customerPhone: currentUser?.phone || '',
     customerAddress: '',
     deviceCategory: 'Smartphone',
     deviceBrand: '',
@@ -55,6 +67,25 @@ export default function CustomerPortal({ onOpenCertificate }) {
     urgency: 'NORMAL',
     passcodeProvided: false
   });
+
+  // Sync customer info if user logs in
+  React.useEffect(() => {
+    if (currentUser?.role === 'customer') {
+      setFormData(prev => ({
+        ...prev,
+        customerName: prev.customerName || currentUser.name || '',
+        customerEmail: prev.customerEmail || currentUser.email || '',
+        customerPhone: prev.customerPhone || currentUser.phone || ''
+      }));
+      const matched = repairs.find(
+        r => r.customer?.email?.toLowerCase() === currentUser.email?.toLowerCase() ||
+             r.customer?.name?.toLowerCase() === currentUser.name?.toLowerCase()
+      );
+      if (matched) {
+        setSearchCode(matched.trackingCode);
+      }
+    }
+  }, [currentUser, repairs]);
 
   // Find currently viewed repair
   const currentRepair = repairs.find(

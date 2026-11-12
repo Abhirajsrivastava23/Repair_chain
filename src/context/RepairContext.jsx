@@ -6,6 +6,7 @@ import {
   INITIAL_WARRANTY_REGISTRY,
   INITIAL_AUDIT_LOGS
 } from '../data/mockData';
+import { AUTH_USERS, authenticateUser, hasViewPermission } from '../data/authUsers';
 
 const RepairContext = createContext();
 
@@ -91,8 +92,35 @@ export function RepairProvider({ children }) {
     return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
   });
 
-  const [currentRole, setCurrentRole] = useState('customer'); // 'customer' | 'technician' | 'manager' | 'inventory' | 'admin'
-  const [activeTechId, setActiveTechId] = useState('TECH-01');
+  // Current logged in user (null = show Login Screen)
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem('repairchain_current_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [currentRole, setCurrentRole] = useState(() => {
+    const savedUser = localStorage.getItem('repairchain_current_user');
+    if (savedUser) {
+      try {
+        const u = JSON.parse(savedUser);
+        return u.role || 'customer';
+      } catch (e) {
+        return 'customer';
+      }
+    }
+    return 'customer';
+  }); // 'customer' | 'technician' | 'manager' | 'inventory' | 'admin'
+
+  const [activeTechId, setActiveTechId] = useState(() => {
+    const savedUser = localStorage.getItem('repairchain_current_user');
+    if (savedUser) {
+      try {
+        const u = JSON.parse(savedUser);
+        if (u.techId) return u.techId;
+      } catch (e) {}
+    }
+    return 'TECH-01';
+  });
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('repairchain_theme') || 'dark';
   });
@@ -297,6 +325,58 @@ export function RepairProvider({ children }) {
     );
 
     addToast('info', 'Technician Assigned', `${tech.name} assigned to ${repairId}.`);
+  };
+
+  // Technician accepts / claims an incoming customer repair request ("User ko ye sahi krwana he -> req accept kr ke sahi kre ga")
+  const acceptRepairRequest = (repairId, customTechId, customTechName) => {
+    const techIdToUse = customTechId || activeTechId || (currentUser?.role === 'technician' ? (currentUser.techId || 'TECH-01') : 'TECH-01');
+    const tech = technicians.find(t => t.id === techIdToUse) || technicians[0];
+    const techName = customTechName || currentUser?.name || tech.name;
+
+    const now = new Date().toISOString();
+
+    setRepairs(prev => prev.map(repair => {
+      if (repair.id !== repairId) return repair;
+
+      const timelineEntry = {
+        stage: 'Under Diagnosis',
+        timestamp: now,
+        actor: `${techName} (Technician)`,
+        note: `Technician ${techName} accepted the repair request from ${repair.customer.name}. Active triage & diagnosis initiated.`
+      };
+
+      return {
+        ...repair,
+        assignedTechId: tech.id,
+        assignedTechName: tech.name,
+        stage: 'Under Diagnosis',
+        stageProgress: 30,
+        updatedAt: now,
+        timeline: [...repair.timeline, timelineEntry]
+      };
+    }));
+
+    // Update technician active workload count
+    setTechnicians(prev => prev.map(t => {
+      if (t.id === tech.id) {
+        return { ...t, activeRepairs: t.activeRepairs + 1 };
+      }
+      return t;
+    }));
+
+    logAudit(
+      techName,
+      'Technician',
+      'Accepted Customer Request',
+      repairId,
+      `Technician ${techName} accepted repair ticket ${repairId}.`
+    );
+
+    addToast(
+      'success',
+      'Repair Request Accepted!',
+      `You accepted ticket ${repairId}. Triage initiated under your workbench.`
+    );
   };
 
   // Update diagnosis and create cost estimate
@@ -670,12 +750,78 @@ export function RepairProvider({ children }) {
     setWarranties(INITIAL_WARRANTY_REGISTRY);
     setAuditLogs(INITIAL_AUDIT_LOGS);
     localStorage.clear();
+    setCurrentUser(null);
+    setCurrentRole('customer');
     addToast('info', 'Demo Data Reset', 'Platform reset to original showcase state.');
+  };
+
+  // Multi-Role Authentication Functions ("Sabka alag alag id password rhega")
+  const login = (usernameOrId, password) => {
+    const user = authenticateUser(usernameOrId, password);
+    if (!user) {
+      addToast('error', 'Authentication Failed', 'Invalid User ID or Password. Please check your credentials.');
+      return { success: false, error: 'Invalid User ID or password' };
+    }
+
+    setCurrentUser(user);
+    localStorage.setItem('repairchain_current_user', JSON.stringify(user));
+
+    // Redirect to default view based on role
+    if (user.role === 'customer') {
+      setCurrentRole('customer');
+    } else if (user.role === 'technician') {
+      setCurrentRole('technician');
+      if (user.techId) setActiveTechId(user.techId);
+    } else if (user.role === 'manager') {
+      setCurrentRole('manager');
+    } else if (user.role === 'admin') {
+      setCurrentRole('admin');
+    }
+
+    logAudit(user.name, user.roleLabel, 'Logged In', 'AUTH', `User ${user.id} logged in as ${user.roleLabel}.`);
+    addToast('success', `Welcome back, ${user.name}!`, `Authenticated as ${user.roleLabel}.`);
+    return { success: true, user };
+  };
+
+  const logout = () => {
+    if (currentUser) {
+      logAudit(currentUser.name, currentUser.roleLabel, 'Logged Out', 'AUTH', `User ${currentUser.id} logged out.`);
+    }
+    setCurrentUser(null);
+    localStorage.removeItem('repairchain_current_user');
+    setCurrentRole('customer');
+    addToast('info', 'Signed Out', 'You have been securely signed out of RepairChain.');
+  };
+
+  const switchUser = (userId) => {
+    const user = AUTH_USERS.find(u => u.id === userId);
+    if (user) {
+      setCurrentUser(user);
+      localStorage.setItem('repairchain_current_user', JSON.stringify(user));
+      if (user.role === 'customer') {
+        setCurrentRole('customer');
+      } else if (user.role === 'technician') {
+        setCurrentRole('technician');
+        if (user.techId) setActiveTechId(user.techId);
+      } else if (user.role === 'manager') {
+        setCurrentRole('manager');
+      } else if (user.role === 'admin') {
+        setCurrentRole('admin');
+      }
+      addToast('info', 'Role Switched', `Now operating as ${user.name} (${user.roleLabel}).`);
+    }
   };
 
   return (
     <RepairContext.Provider
       value={{
+        currentUser,
+        setCurrentUser,
+        login,
+        logout,
+        switchUser,
+        authUsers: AUTH_USERS,
+        hasViewPermission: (viewId) => hasViewPermission(currentUser, viewId),
         repairs,
         inventory,
         technicians,
@@ -692,6 +838,7 @@ export function RepairProvider({ children }) {
         removeToast,
         submitRepairRequest,
         assignTechnician,
+        acceptRepairRequest,
         updateDiagnosis,
         handleQuoteDecision,
         consumePart,
