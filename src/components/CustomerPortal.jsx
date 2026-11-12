@@ -272,15 +272,19 @@ export default function CustomerPortal({ onOpenCertificate }) {
             </div>
 
             {/* 7-Stage Visual Lifecycle Progress Tracker */}
-            <div className="lifecycle-timeline">
-              <div className="timeline-track">
-                <div
-                  className="timeline-bar-fill"
-                  style={{ width: `${STAGE_CONFIG[currentRepair.stage]?.progress || 15}%` }}
-                ></div>
+            <div className="lifecycle-timeline-wrapper">
+              <div className="timeline-scroll-hint mono">
+                ← Swipe to explore full 7 stages →
               </div>
+              <div className="lifecycle-timeline">
+                <div className="timeline-track">
+                  <div
+                    className="timeline-bar-fill"
+                    style={{ width: `${STAGE_CONFIG[currentRepair.stage]?.progress || 15}%` }}
+                  ></div>
+                </div>
 
-              <div className="timeline-steps">
+                <div className="timeline-steps">
                 {STAGES.map((stageName, index) => {
                   const stageIndex = index + 1;
                   const currentStageIndex = STAGES.indexOf(currentRepair.stage) + 1;
@@ -306,6 +310,7 @@ export default function CustomerPortal({ onOpenCertificate }) {
               </div>
             </div>
           </div>
+        </div>
 
           {/* Interactive Action Banners based on Current Stage */}
           {currentRepair.stage === 'Awaiting Customer Approval' && (
